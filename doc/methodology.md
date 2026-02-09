@@ -1,112 +1,4 @@
-# Global Visual Quality Scoring Strategy
-
-## 1. Overview
-
-The global visual quality score represents a unified and interpretable evaluation of a real estate image based on multiple technical visual metrics.  
-Rather than relying on a single criterion, the system combines complementary metrics to reflect overall perceived image quality in a robust and explainable manner.
-
-The final score is designed to be:
-- Objective
-- Reproducible
-- Easy to interpret
-- Suitable for comparison between images
-
----
-
-## 2. Contributing Metrics
-
-The global score is computed using the following five metrics:
-
-1. Lighting Quality  
-2. Sharpness and Blur  
-3. Composition and Geometric Alignment  
-4. Color Balance and Saturation  
-5. Visual Clutter and Scene Complexity  
-
-Each metric produces an independent normalized score ranging from **0 to 100**.
-
----
-
-## 3. Weighting Strategy
-
-To reflect the relative importance of each visual aspect in real estate photography, a weighted aggregation strategy is applied.
-
-The initial weighting scheme for the first version of the system (V1) is defined as follows:
-
-| Metric | Weight |
-|------|--------|
-| Lighting | 25% |
-| Sharpness | 20% |
-| Composition | 20% |
-| Color Balance & Saturation | 15% |
-| Visual Clutter | 20% |
-
-Lighting is assigned the highest weight due to its dominant influence on perceived image quality, while the remaining metrics contribute proportionally to the overall assessment.
-
-Weights may be adjusted in future iterations based on empirical evaluation and user feedback.
-
----
-
-## 4. Score Normalization
-
-All metric scores are normalized to a common scale between **0 and 100** prior to aggregation.  
-This ensures comparability and prevents any single metric from dominating the global score due to scale differences.
-
-Normalization allows the system to remain modular and extensible.
-
----
-
-## 5. Global Score Computation
-
-The global visual quality score is computed as a weighted sum of the individual metric scores:
-Global Score = Σ (metric_score × metric_weight)
-
-The resulting score is then rounded to the nearest integer for presentation purposes.
-
----
-
-## 6. Global Score Interpretation
-
-The final global score is interpreted using qualitative categories to improve user understanding:
-
-- **0–30** → Poor visual quality  
-- **31–60** → Acceptable but improvable quality  
-- **61–80** → Good visual quality  
-- **81–100** → High visual quality  
-
-These categories allow users to quickly assess whether an image is suitable for publication or requires improvement.
-
----
-
-## 7. Explainability and Transparency
-
-In addition to the numerical global score, the system provides:
-- A breakdown of individual metric scores
-- Explanatory messages for each metric
-- Clear indications of the most influential factors affecting the final score
-
-This approach ensures transparency and prevents the system from behaving as a black box.
-
----
-
-## 8. Handling Edge Cases
-
-The scoring strategy accounts for potential edge cases, such as:
-- Extremely poor performance in a single critical metric
-- Images with mixed-quality characteristics
-
-In such cases, explanatory feedback highlights the dominant issues affecting the global score.
-
----
-
-## 9. Future Improvements
-
-Future iterations of the scoring strategy may include:
-- Dynamic weight adjustment based on user feedback
-- Context-aware weighting depending on room type
-- Data-driven optimization of weights using supervised learning
-
-These enhancements are considered beyond the scope of the initial project version.
+This document describes the methodology used to evaluate and score the visual quality of real estate images using explainable computer vision techniques.
 
 # Metric 1 — Lighting Quality Evaluation
 
@@ -229,7 +121,6 @@ Its purpose is to provide a **technical and objective evaluation**, not a subjec
 
 The lighting quality score represents one of the components contributing to the **global visual quality score**, together with other metrics such as sharpness, composition, color balance, and visual clutter.
 The relative weight of this metric within the global score is defined in later stages of the project.
-
 
 # Metric 2 — Sharpness and Blur Evaluation
 
@@ -717,3 +608,113 @@ Its goal is to estimate **perceived visual complexity**, not stylistic value.
 
 The visual clutter score contributes to the **global visual quality score**, complementing lighting, sharpness, composition, and color balance metrics.
 This metric plays a key role in assessing spatial readability and perceived cleanliness of real estate images.
+
+# Global Visual Quality Scoring Strategy
+
+## 1. Overview
+
+The global visual quality score represents a unified and interpretable evaluation of a real estate image based on multiple technical visual metrics.  
+Rather than relying on a single criterion, the system combines complementary metrics to reflect overall perceived image quality in a robust and explainable manner.
+
+The final score is designed to be:
+- Objective
+- Reproducible
+- Easy to interpret
+- Suitable for comparison between images
+
+---
+
+## 2. Contributing Metrics
+
+The global score is computed using the following five metrics:
+
+1. Lighting Quality  
+2. Sharpness and Blur  
+3. Composition and Geometric Alignment  
+4. Color Balance and Saturation  
+5. Visual Clutter and Scene Complexity  
+
+Each metric produces an independent normalized score ranging from **0 to 100**.
+
+---
+
+## 3. Weighting Strategy
+
+To reflect the relative importance of each visual aspect in real estate photography, a weighted aggregation strategy is applied.
+
+The initial weighting scheme for the first version of the system (V1) is defined as follows:
+
+| Metric | Weight |
+|------|--------|
+| Lighting | 25% |
+| Sharpness | 20% |
+| Composition | 20% |
+| Color Balance & Saturation | 15% |
+| Visual Clutter | 20% |
+
+Lighting is assigned the highest weight due to its dominant influence on perceived image quality, while the remaining metrics contribute proportionally to the overall assessment.
+
+Weights may be adjusted in future iterations based on empirical evaluation and user feedback.
+
+---
+
+## 4. Score Normalization
+
+All metric scores are normalized to a common scale between **0 and 100** prior to aggregation.  
+This ensures comparability and prevents any single metric from dominating the global score due to scale differences.
+
+Normalization allows the system to remain modular and extensible.
+
+---
+
+## 5. Global Score Computation
+
+The global visual quality score is computed as a weighted sum of the individual metric scores:
+Global Score = Σ (metric_score × metric_weight)
+
+The resulting score is then rounded to the nearest integer for presentation purposes.
+
+---
+
+## 6. Global Score Interpretation
+
+The final global score is interpreted using qualitative categories to improve user understanding:
+
+- **0–30** → Poor visual quality  
+- **31–60** → Acceptable but improvable quality  
+- **61–80** → Good visual quality  
+- **81–100** → High visual quality  
+
+These categories allow users to quickly assess whether an image is suitable for publication or requires improvement.
+
+---
+
+## 7. Explainability and Transparency
+
+In addition to the numerical global score, the system provides:
+- A breakdown of individual metric scores
+- Explanatory messages for each metric
+- Clear indications of the most influential factors affecting the final score
+
+This approach ensures transparency and prevents the system from behaving as a black box.
+
+---
+
+## 8. Handling Edge Cases
+
+The scoring strategy accounts for potential edge cases, such as:
+- Extremely poor performance in a single critical metric
+- Images with mixed-quality characteristics
+
+In such cases, explanatory feedback highlights the dominant issues affecting the global score.
+
+---
+
+## 9. Future Improvements
+
+Future iterations of the scoring strategy may include:
+- Dynamic weight adjustment based on user feedback
+- Context-aware weighting depending on room type
+- Data-driven optimization of weights using supervised learning
+
+These enhancements are considered beyond the scope of the initial project version.
