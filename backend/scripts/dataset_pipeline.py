@@ -13,7 +13,7 @@ import torch
 
 from runtime.runtime_models import encode_image
 
-IMG = 250
+IMG = 50
 YOLO_MODEL = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -39,11 +39,7 @@ def run_step(name, func, *args, **kwargs):
 # =====================================
 # 1️⃣ DOWNLOAD
 # =====================================
-def download_kaggle_images(
-    max_new_downloads=IMG,
-    timeout=10,
-    sleep_time=0.05,
-):
+def download_kaggle_images(max_new_downloads=IMG, timeout=10, sleep_time=0.05):
 
     BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -61,9 +57,27 @@ def download_kaggle_images(
 
     downloaded = 0
     skipped = 0
-    already_present = 0
 
-    print(f"📦 Imágenes ya existentes detectadas: {len(existing_files)}")
+    # =====================================
+    # PROGRESS BAR FUNCTION
+    # =====================================
+
+    def print_progress(current, total):
+
+        bar_len = 30
+        filled_len = int(bar_len * current / total)
+
+        bar = "█" * filled_len + "░" * (bar_len - filled_len)
+
+        print(
+            f"\r⬇️ [{bar}] {current}/{total} | skipped:{skipped}",
+            end="",
+            flush=True
+        )
+
+    # =====================================
+    # DOWNLOAD LOOP
+    # =====================================
 
     for idx, row in df.iterrows():
 
@@ -74,7 +88,6 @@ def download_kaggle_images(
         filename = OUTPUT_DIR / f"img_{idx}.webp"
 
         if filename.name in existing_files:
-            already_present += 1
             continue
 
         try:
@@ -86,25 +99,20 @@ def download_kaggle_images(
 
                 downloaded += 1
                 existing_files.add(filename.name)
+
+                # 🔥 ACTUALIZA PROGRESO
+                print_progress(downloaded, max_new_downloads)
+
             else:
                 skipped += 1
 
         except Exception:
             skipped += 1
 
-        if downloaded % 100 == 0 and downloaded != 0:
-            print(
-                f"⬇️ nuevas descargadas: {downloaded} | "
-                f"ya existentes: {already_present} | "
-                f"saltadas: {skipped}"
-            )
-
         time.sleep(sleep_time)
 
-    print("\n✅ FIN DESCARGA INCREMENTAL")
+    print("\n\n✅ FIN DESCARGA INCREMENTAL")
     print(f"Nuevas descargadas: {downloaded}")
-    print(f"Ya existentes: {already_present}")
-    print(f"Saltadas: {skipped}")
 
 # =====================================
 # 2️⃣ FILTER FEATURES
@@ -207,27 +215,45 @@ def filter_interiors(max_images=IMG):
     INPUT_DIR = BASE_DIR / "data/images/kaggle_raw"
     OUTPUT_CSV = BASE_DIR / "data/datasets/interior_filter.csv"
 
-    if OUTPUT_CSV.exists():
-        df_results = pd.read_csv(OUTPUT_CSV)
-        processed = set(Path(p).resolve().as_posix() for p in df_results["image_path"].values)
-    else:
-        df_results = pd.DataFrame()
-        processed = set()
-
-    count = 0
     rows = []
 
-    for img_path in INPUT_DIR.glob("*.webp"):
+    # =====================================
+    # LISTA DE IMÁGENES
+    # =====================================
 
-        if max_images is not None and count >= max_images:
-            break
+    images = list(INPUT_DIR.glob("*.webp"))
 
-        norm_path = img_path.resolve().as_posix()
+    if max_images is not None:
+        images = images[:max_images]
 
-        if norm_path in processed:
-            continue
+    total = len(images)
 
-        img = cv2.imread(norm_path)
+    print(f"\n🧠 Analizando {total} imágenes...")
+
+    # =====================================
+    # PROGRESS BAR
+    # =====================================
+
+    def print_progress(current, total):
+
+        bar_len = 30
+        filled_len = int(bar_len * current / total)
+
+        bar = "█" * filled_len + "░" * (bar_len - filled_len)
+
+        print(
+            f"\r🔍 [{bar}] {current}/{total}",
+            end="",
+            flush=True
+        )
+
+    # =====================================
+    # LOOP PRINCIPAL
+    # =====================================
+
+    for i, img_path in enumerate(images, start=1):
+
+        img = cv2.imread(str(img_path))
         if img is None:
             continue
 
@@ -247,25 +273,19 @@ def filter_interiors(max_images=IMG):
         indoor_score = compute_indoor_score(f)
 
         rows.append({
-            "image_path": norm_path,
+            "image_path": img_path.resolve().as_posix(),
             "indoor_score": indoor_score,
-            "visual_class": "candidate",
             **f
         })
 
-        count += 1
+        # 🔥 ACTUALIZA PROGRESO
+        print_progress(i, total)
 
-        if count % 50 == 0:
-            print(f"Procesadas nuevas: {count}")
+    print("\n")
 
-    if rows:
-        df_new = pd.DataFrame(rows)
-        df_results = pd.concat([df_results, df_new], ignore_index=True)
-        df_results.to_csv(OUTPUT_CSV, index=False)
+    pd.DataFrame(rows).to_csv(OUTPUT_CSV, index=False)
 
-    print("\n🔥 FILTER PRO V3 COMPLETADO")
-    print(f"Nuevas procesadas: {count}")
-    print(f"Total acumulado: {len(df_results)}")
+    print("🔥 FILTER PRO COMPLETADO")
 
 # =====================================
 # 3️⃣ YOLO SEMANTIC
@@ -276,55 +296,36 @@ def get_yolo_model():
     if YOLO_MODEL is None:
         from ultralytics import YOLO
         print("🚀 Cargando YOLO GLOBAL...")
-        YOLO_MODEL = YOLO("yolov8n.pt")
+        YOLO_MODEL = YOLO(str(Path(__file__).parent / "yolov8n.pt"))
 
     return YOLO_MODEL
 
-def yolo_semantic_filter():
 
-    print("\n🧠 Ejecutando YOLO semantic filter")
 
     BASE_DIR = Path(__file__).resolve().parent.parent
     CSV_PATH = BASE_DIR / "data/datasets/interior_filter.csv"
     OUTPUT_CSV = BASE_DIR / "data/datasets/interior_semantic.csv"
 
-    INTERIOR_CLASSES = [
-        "bed", "couch", "chair", "dining table", "tv", "potted plant"
-    ]
-
     df = pd.read_csv(CSV_PATH)
-
-    if OUTPUT_CSV.exists():
-        df_done = pd.read_csv(OUTPUT_CSV)
-        processed = set(Path(p).resolve().as_posix() for p in df_done["image_path"].values)
-        results = df_done.to_dict("records")
-    else:
-        processed = set()
-        results = []
-
     MODEL = get_yolo_model()
 
-    new_count = 0
+    results = []
 
     for _, row in df.iterrows():
 
-        img_path = Path(row["image_path"]).resolve().as_posix()
+        img_path = row["image_path"]
 
-        if img_path in processed:
-            continue
-
-        try:
-            preds = MODEL(img_path, verbose=False)[0]
-        except Exception as e:
-            print(f"⚠️ Error YOLO con {img_path}: {e}")
-            continue
+        preds = MODEL(img_path, verbose=False)[0]
 
         detected_names = (
             [MODEL.names[int(c)] for c in preds.boxes.cls]
             if preds.boxes is not None else []
         )
 
-        has_interior_object = any(obj in INTERIOR_CLASSES for obj in detected_names)
+        has_interior_object = any(
+            obj in ["bed","couch","chair","dining table","tv","potted plant"]
+            for obj in detected_names
+        )
 
         results.append({
             "image_path": img_path,
@@ -333,115 +334,250 @@ def yolo_semantic_filter():
             "detected_objects": ",".join(detected_names)
         })
 
-        new_count += 1
-
     pd.DataFrame(results).to_csv(OUTPUT_CSV, index=False)
 
     print("\n✅ YOLO semantic filter DONE")
-    print(f"Nuevas procesadas: {new_count}")
+
+def yolo_semantic_filter():
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    CSV_PATH = BASE_DIR / "data/datasets/interior_filter.csv"
+    OUTPUT_CSV = BASE_DIR / "data/datasets/interior_semantic.csv"
+
+    df = pd.read_csv(CSV_PATH)
+    MODEL = get_yolo_model()
+
+    results = []
+
+    total = len(df)
+
+    print(f"\n🧠 Ejecutando YOLO semantic filter ({total} imágenes)")
+
+    # =====================================
+    # PROGRESS BAR
+    # =====================================
+
+    def print_progress(current, total):
+
+        bar_len = 30
+        filled_len = int(bar_len * current / total)
+
+        bar = "█" * filled_len + "░" * (bar_len - filled_len)
+
+        print(
+            f"\r🤖 [{bar}] {current}/{total}",
+            end="",
+            flush=True
+        )
+
+    # =====================================
+    # LOOP PRINCIPAL
+    # =====================================
+
+    for i, (_, row) in enumerate(df.iterrows(), start=1):
+
+        img_path = row["image_path"]
+
+        try:
+            preds = MODEL(img_path, verbose=False)[0]
+        except Exception as e:
+            print(f"\n⚠️ Error YOLO con {img_path}: {e}")
+            continue
+
+        detected_names = (
+            [MODEL.names[int(c)] for c in preds.boxes.cls]
+            if preds.boxes is not None else []
+        )
+
+        has_interior_object = any(
+            obj in ["bed", "couch", "chair", "dining table", "tv", "potted plant"]
+            for obj in detected_names
+        )
+
+        results.append({
+            "image_path": img_path,
+            "indoor_score": row["indoor_score"],
+            "has_semantic_interior": int(has_interior_object),
+            "detected_objects": ",".join(detected_names)
+        })
+
+        # 🔥 ACTUALIZA PROGRESO
+        print_progress(i, total)
+
+    print("\n")
+
+    pd.DataFrame(results).to_csv(OUTPUT_CSV, index=False)
+
+    print("✅ YOLO semantic filter DONE")
 
 # =====================================
 # 4️⃣ FINAL DATASET
 # =====================================
 def create_final_dataset():
 
-    print("\n🧩 Creando FINAL DATASET")
-
     BASE_DIR = Path(__file__).resolve().parent.parent
-
     INPUT_CSV = BASE_DIR / "data/datasets/interior_semantic.csv"
     OUTPUT_CSV = BASE_DIR / "data/datasets/interior_final_candidates.csv"
 
-    VISUAL_THRESHOLD = 0.70
-
     df = pd.read_csv(INPUT_CSV)
 
-    df_final = df[
-        (df["indoor_score"] < VISUAL_THRESHOLD) &
-        (df["has_semantic_interior"] == 1)
-    ].copy()
+    # 🔥 DATASET LIMPIO
+    df["quality_bucket"] = "unknown"
+    df["quality_bucket_human"] = ""
+    df["final_quality"] = "unknown"
 
-    def assign_quality(row):
-        detected = str(row["detected_objects"])
-        obj_count = 0 if detected.strip() == "" else len(detected.split(","))
-
-        if row["indoor_score"] < 0.45 and obj_count >= 2:
-            return "good"
-        if row["indoor_score"] < 0.60:
-            return "medium"
-        return "bad"
-
-    df_final["quality_bucket"] = df_final.apply(assign_quality, axis=1)
-    df_final["quality_bucket_human"] = ""
-
-    def merge_labels(row):
-        human = str(row.get("quality_bucket_human", "")).strip()
-        return human if human not in ["", "nan"] else row["quality_bucket"]
-
-    df_final["final_quality"] = df_final.apply(merge_labels, axis=1)
+    df = df.astype({
+        "quality_bucket": "string",
+        "quality_bucket_human": "string",
+        "final_quality": "string"
+    })
 
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    df_final.to_csv(OUTPUT_CSV, index=False)
+    df.to_csv(OUTPUT_CSV, index=False)
 
-    print("✅ FINAL DATASET creado")
+    print("✅ FINAL DATASET creado (modo CLEAN)")
+
+def human_label_step():
+
+    print("\n🧠 HUMAN LABEL STEP (ACTIVE LEARNING CLEAN MODE)")
+
+    while True:
+        try:
+            limit = int(input("👉 ¿Cuántas imágenes quieres etiquetar? "))
+            break
+        except:
+            print("Introduce un número válido.")
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    CSV_PATH = BASE_DIR / "data/datasets/interior_final_candidates.csv"
+
+    df = pd.read_csv(CSV_PATH, dtype=str)
+    df["quality_bucket_human"] = df["quality_bucket_human"].fillna("")
+
+    pending = df[df["quality_bucket_human"] == ""].copy()
+
+    print(f"Imágenes disponibles para etiquetar: {len(pending)}")
+
+    count = 0
+
+    for idx, row in pending.iterrows():
+
+        if count >= limit:
+            break
+
+        img_path = Path(row["image_path"])
+
+        if not img_path.exists():
+            continue
+
+        img = cv2.imread(str(img_path))
+
+        if img is None:
+            continue
+
+        cv2.imshow("Human Label", img)
+
+        print("\n1 = bad | 2 = medium | 3 = good | ESC = salir")
+
+        key = cv2.waitKey(0)
+
+        if key == 27:
+            print("⛔ Salida manual.")
+            break
+        elif key == ord("1"):
+            df.loc[idx, "quality_bucket_human"] = "bad"
+        elif key == ord("2"):
+            df.loc[idx, "quality_bucket_human"] = "medium"
+        elif key == ord("3"):
+            df.loc[idx, "quality_bucket_human"] = "good"
+
+        count += 1
+
+    cv2.destroyAllWindows()
+
+    # 🔥 SOLO etiquetas humanas pasan a final_quality
+    def merge_labels(row):
+        human = str(row.get("quality_bucket_human", "")).strip()
+        return human if human not in ["", "nan"] else "unknown"
+
+    df["final_quality"] = df.apply(merge_labels, axis=1)
+
+    df.to_csv(CSV_PATH, index=False)
+
+    print(f"\n✅ Etiquetadas manualmente: {count}")
+
+def prune_outdoor_images():
+
+    print("\n🧹 Eliminando imágenes OUTDOOR según YOLO...")
+
+    BASE_DIR = Path(__file__).resolve().parent.parent
+
+    SEMANTIC_CSV = BASE_DIR / "data/datasets/interior_semantic.csv"
+    IMAGE_DIR = BASE_DIR / "data/images/kaggle_raw"
+
+    df = pd.read_csv(SEMANTIC_CSV)
+
+    keep_paths = set(
+        Path(p).resolve().as_posix()
+        for p in df[df["has_semantic_interior"] == 1]["image_path"]
+    )
+
+    deleted = 0
+    kept = 0
+
+    for img in IMAGE_DIR.glob("*.webp"):
+
+        norm = img.resolve().as_posix()
+
+        if norm not in keep_paths:
+            try:
+                img.unlink()
+                deleted += 1
+            except Exception as e:
+                print(f"⚠️ No se pudo borrar {img}: {e}")
+        else:
+            kept += 1
+
+    print(f"✅ Imágenes interiores mantenidas: {kept}")
+    print(f"❌ Imágenes outdoor eliminadas: {deleted}")
 
 # =====================================
-# 5️⃣ CLIP EMBEDDINGS (RUNTIME ALIGNED)
+# 5️⃣ CLIP EMBEDDINGS
 # =====================================
 def extract_embeddings():
 
     from PIL import Image
-
-    print("\n🧠 Extrayendo embeddings usando runtime encoder")
 
     BASE_DIR = Path(__file__).resolve().parent.parent
     CSV_PATH = BASE_DIR / "data/datasets/interior_final_candidates.csv"
     OUTPUT_PATH = BASE_DIR / "data/embeddings/realestate_embeddings.parquet"
 
     df = pd.read_csv(CSV_PATH)
-    df = df[df["final_quality"].notna()].copy()
 
-    if OUTPUT_PATH.exists():
-        df_old = pd.read_parquet(OUTPUT_PATH)
-        processed = set(Path(p).resolve().as_posix() for p in df_old["image_path"].values)
-        embeddings = df_old.to_dict("records")
-    else:
-        processed = set()
-        embeddings = []
+    # 🔥 SOLO DATA HUMANA
+    df = df[df["final_quality"] != "unknown"].copy()
 
-    new_count = 0
+    rows = []
 
     for _, row in df.iterrows():
 
-        img_path = Path(row["image_path"]).resolve()
-        norm_path = img_path.as_posix()
-
-        if norm_path in processed:
-            continue
+        img_path = Path(row["image_path"])
 
         if not img_path.exists():
             continue
 
-        try:
-            with Image.open(img_path) as im:
-                emb = encode_image(im)
+        with Image.open(img_path) as im:
+            emb = encode_image(im)
 
-            embeddings.append({
-                "image_path": norm_path,
-                "final_quality": row["final_quality"],
-                "embedding": emb.tolist()
-            })
+        rows.append({
+            "image_path": img_path.as_posix(),
+            "final_quality": row["final_quality"],
+            "embedding": emb.tolist()
+        })
 
-            new_count += 1
+    pd.DataFrame(rows).to_parquet(OUTPUT_PATH, index=False)
 
-        except Exception as e:
-            print(f"⚠️ Error con {img_path}: {e}")
-
-    df_emb = pd.DataFrame(embeddings)
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df_emb.to_parquet(OUTPUT_PATH, index=False)
-
-    print(f"✅ Embeddings actualizados | Nuevos: {new_count}")
+    print(f"✅ Embeddings creados SOLO con etiquetas humanas: {len(rows)}")
 
 # =====================================
 # BOOTSTRAP
@@ -451,11 +587,13 @@ def bootstrap_dataset(img_batch=IMG):
     print("\n========== BOOTSTRAP DATASET ==========")
     total_start = time.time()
 
-    run_step("[1/5] DOWNLOAD", download_kaggle_images, max_new_downloads=img_batch)
-    run_step("[2/5] FILTER", filter_interiors, max_images=None)
-    run_step("[3/5] YOLO SEMANTIC", yolo_semantic_filter)
-    run_step("[4/5] CREATE FINAL DATASET", create_final_dataset)
-    run_step("[5/5] EXTRACT EMBEDDINGS", extract_embeddings)
+    run_step("[1/7] DOWNLOAD", download_kaggle_images, max_new_downloads=img_batch)
+    run_step("[2/7] FILTER", filter_interiors, max_images=None)
+    run_step("[3/7] YOLO SEMANTIC", yolo_semantic_filter)
+    run_step("[4/7] CREATE FINAL DATASET", create_final_dataset)
+    run_step("[5/7] HUMAN LABEL", human_label_step)
+    run_step("[6/7] PRUNE BAD IMAGES", prune_outdoor_images)
+    run_step("[7/7] EXTRACT EMBEDDINGS", extract_embeddings)
 
     print("\n🏁 BOOTSTRAP TOTAL:", round(time.time() - total_start, 2), "s")
 
