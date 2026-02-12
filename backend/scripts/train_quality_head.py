@@ -8,11 +8,13 @@ from sklearn.metrics import classification_report
 import joblib
 
 # =====================
-# CONFIG
+# PATHS ROBUSTOS
 # =====================
 
-EMB_PATH = Path("../data/embeddings/realestate_embeddings.parquet")
-MODEL_PATH = Path("../models/quality_head.joblib")
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+EMB_PATH = BASE_DIR / "data/embeddings/realestate_embeddings.parquet"
+MODEL_PATH = BASE_DIR / "models/quality_head.joblib"
 
 # =====================
 # LOAD DATA
@@ -21,11 +23,20 @@ MODEL_PATH = Path("../models/quality_head.joblib")
 print("\n📂 Cargando embeddings...")
 
 df = pd.read_parquet(EMB_PATH)
+df = df[df["final_quality"].notna()].copy()
 
 X = np.vstack(df["embedding"].values)
 y = df["final_quality"].values
 
 print(f"Shape embeddings: {X.shape}")
+
+# =====================
+# NORMALIZE EMBEDDINGS (SAFE)
+# =====================
+
+norms = np.linalg.norm(X, axis=1, keepdims=True)
+norms[norms == 0] = 1e-8
+X = X / norms
 
 # =====================
 # LABEL ENCODER
@@ -46,13 +57,17 @@ X_train, X_val, y_train, y_val = train_test_split(
 )
 
 # =====================
-# MODEL (QUALITY HEAD)
+# MODEL
 # =====================
 
 print("\n🧠 Entrenando quality head...")
 
 model = LogisticRegression(
-    max_iter=2000
+    max_iter=2000,
+    solver="lbfgs",
+    multi_class="auto",
+    class_weight="balanced",
+    random_state=42
 )
 
 model.fit(X_train, y_train)

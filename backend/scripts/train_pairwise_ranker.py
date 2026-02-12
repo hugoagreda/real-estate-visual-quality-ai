@@ -6,15 +6,23 @@ import joblib
 import random
 
 # =====================
-# CONFIG
+# SEED (REPRODUCIBLE)
 # =====================
 
-EMB_PATH = Path("../data/embeddings/realestate_embeddings.parquet")
-MODEL_PATH = Path("../models/pairwise_ranker.joblib")
+random.seed(42)
+np.random.seed(42)
 
-PAIR_SAMPLES = 5000   # número máximo de pares a generar
+# =====================
+# PATHS ROBUSTOS
+# =====================
 
-# ranking numérico
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+EMB_PATH = BASE_DIR / "data/embeddings/realestate_embeddings.parquet"
+MODEL_PATH = BASE_DIR / "models/pairwise_ranker.joblib"
+
+PAIR_SAMPLES = 5000
+
 RANK_MAP = {
     "bad": 0,
     "medium": 1,
@@ -28,17 +36,21 @@ RANK_MAP = {
 print("\n📂 Cargando embeddings...")
 
 df = pd.read_parquet(EMB_PATH)
-
-# eliminar filas sin label por seguridad
 df = df[df["final_quality"].notna()].copy()
+
+print(f"Embeddings cargados: {len(df)}")
 
 X = np.vstack(df["embedding"].values)
 y = df["final_quality"].values
 
-print(f"Embeddings cargados: {len(df)}")
+# =====================
+# NORMALIZACIÓN (ALINEADO CON RUNTIME)
+# =====================
+
+X = X / np.linalg.norm(X, axis=1, keepdims=True)
 
 # =====================
-# GENERAR PARES
+# GENERAR PARES BALANCEADOS
 # =====================
 
 print("\n🧠 Generando pares pairwise...")
@@ -48,46 +60,50 @@ pairs_y = []
 
 indices = list(range(len(df)))
 
-for _ in range(PAIR_SAMPLES):
+attempts = 0
+max_attempts = PAIR_SAMPLES * 10
+
+while len(pairs_X) < PAIR_SAMPLES and attempts < max_attempts:
 
     i, j = random.sample(indices, 2)
 
     rank_i = RANK_MAP[y[i]]
     rank_j = RANK_MAP[y[j]]
 
-    # ignorar pares iguales
     if rank_i == rank_j:
+        attempts += 1
         continue
 
     emb_i = X[i]
     emb_j = X[j]
 
-    # diferencia DIRECTA (no invertimos dirección)
-    diff = emb_i - emb_j
+    # 🔥 Añadir ambos sentidos (más estable)
+    pairs_X.append(emb_i - emb_j)
+    pairs_y.append(1 if rank_i > rank_j else 0)
 
-    # label = 1 si A mejor que B
-    label = 1 if rank_i > rank_j else 0
+    pairs_X.append(emb_j - emb_i)
+    pairs_y.append(1 if rank_j > rank_i else 0)
 
-    pairs_X.append(diff)
-    pairs_y.append(label)
+    attempts += 1
 
 pairs_X = np.array(pairs_X)
 pairs_y = np.array(pairs_y)
 
 print(f"Pares generados válidos: {len(pairs_X)}")
 
-# seguridad extra
 if len(np.unique(pairs_y)) < 2:
-    raise ValueError("❌ Solo se generó una clase en pairs_y. Revisa el dataset.")
+    raise ValueError("❌ Solo se generó una clase en pairs_y.")
 
 # =====================
-# TRAIN RANKER
+# TRAIN RANKER (ALINEADO CON FAST RANKING)
 # =====================
 
 print("\n🚀 Entrenando pairwise ranker...")
 
 model = LogisticRegression(
-    max_iter=2000
+    max_iter=2000,
+    fit_intercept=False,   # 🔥 CRÍTICO para coherencia con fast_ranking
+    n_jobs=-1
 )
 
 model.fit(pairs_X, pairs_y)

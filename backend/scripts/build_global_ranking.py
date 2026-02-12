@@ -11,7 +11,6 @@ EMB_PATH = Path("../data/embeddings/realestate_embeddings.parquet")
 MODEL_PATH = Path("../models/pairwise_ranker.joblib")
 OUTPUT_PATH = Path("../data/embeddings/realestate_global_ranking.parquet")
 
-# mostrar paths completos en consola
 pd.set_option('display.max_colwidth', None)
 
 # =====================
@@ -21,11 +20,19 @@ pd.set_option('display.max_colwidth', None)
 print("\n📂 Cargando embeddings...")
 
 df = pd.read_parquet(EMB_PATH)
-model = joblib.load(MODEL_PATH)
+
+loaded = joblib.load(MODEL_PATH)
+model = loaded["model"] if isinstance(loaded, dict) else loaded
 
 X = np.vstack(df["embedding"].values)
 
 print(f"Embeddings: {X.shape}")
+
+# =====================
+# NORMALIZE (MISMO QUE RUNTIME)
+# =====================
+
+X = X / np.linalg.norm(X, axis=1, keepdims=True)
 
 # =====================
 # GLOBAL RANKING SCORE
@@ -35,24 +42,21 @@ print("\n🧠 Calculando ranking global...")
 
 scores = []
 
-# Cada imagen compite contra todas
-for i in range(len(X)):
+N = len(X)
+
+for i in range(N):
 
     emb_i = X[i]
-    wins = 0
 
-    for j in range(len(X)):
+    # diferencias vectorizadas contra todos
+    diffs = emb_i - X
 
-        if i == j:
-            continue
+    preds = model.predict(diffs)
 
-        diff = (emb_i - X[j]).reshape(1, -1)
+    # ignorar self-compare
+    wins = preds.sum() - preds[i]
 
-        pred = model.predict(diff)[0]
-
-        wins += pred
-
-    scores.append(wins)
+    scores.append(int(wins))
 
 df["global_rank_score"] = scores
 

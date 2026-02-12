@@ -5,27 +5,37 @@ import pandas as pd
 from .runtime_score import score_image
 
 
-# =====================================
+# =====================================================
 # CONFIG
-# =====================================
+# =====================================================
 
-WATCH_FOLDER = Path("backend/data/images/kaggle_raw")
-HISTORY_PATH = Path("backend/runtime/runtime_history.parquet")
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-SCAN_INTERVAL = 5   # segundos entre scans
+WATCH_FOLDER = BASE_DIR / "data/images/kaggle_raw"
+HISTORY_PATH = BASE_DIR / "runtime/runtime_history.parquet"
+
+SCAN_INTERVAL = 5
 
 
-# =====================================
+# =====================================================
 # LOAD HISTORY
-# =====================================
+# =====================================================
 
 def load_history():
 
     if HISTORY_PATH.exists():
+
         df = pd.read_parquet(HISTORY_PATH)
-        processed = set(df["image_path"].values)
+
+        processed = set(
+            Path(p).resolve().as_posix()
+            for p in df["image_path"].values
+        )
+
         history = df.to_dict("records")
+
         print(f"♻️ Historial cargado: {len(history)}")
+
     else:
         processed = set()
         history = []
@@ -33,9 +43,9 @@ def load_history():
     return processed, history
 
 
-# =====================================
+# =====================================================
 # SAVE HISTORY
-# =====================================
+# =====================================================
 
 def save_history(history):
 
@@ -45,9 +55,9 @@ def save_history(history):
     df.to_parquet(HISTORY_PATH, index=False)
 
 
-# =====================================
+# =====================================================
 # MONITOR LOOP
-# =====================================
+# =====================================================
 
 def run_monitor():
 
@@ -59,6 +69,8 @@ def run_monitor():
     while True:
 
         new_files = list(WATCH_FOLDER.glob("*.webp"))
+
+        updated = False
 
         for img_path in new_files:
 
@@ -84,16 +96,15 @@ def run_monitor():
 
             history.append(result)
             processed.add(norm_path)
+            updated = True
 
             print(f"🔥 Score: {result['score']:.3f} | ⏱ {elapsed}s")
 
-        # guardar cada ciclo
-        save_history(history)
+        # guardar solo si hubo cambios
+        if updated:
+            save_history(history)
 
-        # =====================
-        # STATS LIVE
-        # =====================
-
+        # stats runtime
         if history:
             df = pd.DataFrame(history)
 
@@ -111,9 +122,9 @@ def run_monitor():
         time.sleep(SCAN_INTERVAL)
 
 
-# =====================================
+# =====================================================
 # ENTRYPOINT
-# =====================================
+# =====================================================
 
 if __name__ == "__main__":
     run_monitor()

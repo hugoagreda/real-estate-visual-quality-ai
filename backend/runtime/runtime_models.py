@@ -1,103 +1,117 @@
 from pathlib import Path
 import torch
 
-# ============================
-# GLOBAL STATE
-# ============================
-
-CLIP_MODEL = None
-CLIP_PREPROCESS = None
-PAIRWISE_RANKER = None
+# =====================================================
+# DEVICE GLOBAL
+# =====================================================
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-
-# ============================
-# PATHS
-# ============================
-
 BASE_DIR = Path(__file__).resolve().parent.parent
-
 PAIRWISE_PATH = BASE_DIR / "models/pairwise_ranker.joblib"
 
 
-# ============================
-# LOAD CLIP (LAZY GLOBAL)
-# ============================
+# =====================================================
+# MODEL REGISTRY
+# =====================================================
 
-def get_clip():
+class ModelRegistry:
 
-    global CLIP_MODEL, CLIP_PREPROCESS
+    def __init__(self):
 
-    if CLIP_MODEL is None:
-        import open_clip
+        self.clip_model = None
+        self.clip_preprocess = None
+        self.pairwise_ranker = None
 
-        print("🚀 [RUNTIME] Loading OpenCLIP model...")
+    # -------------------------------------------------
+    # CLIP
+    # -------------------------------------------------
 
-        CLIP_MODEL, _, CLIP_PREPROCESS = open_clip.create_model_and_transforms(
-            "ViT-B-32",
-            pretrained="openai",
-        )
+    def get_clip(self):
 
-        CLIP_MODEL = CLIP_MODEL.to(DEVICE)
-        CLIP_MODEL.eval()
+        if self.clip_model is None:
 
-        print("✅ CLIP ready")
+            import open_clip
 
-    return CLIP_MODEL, CLIP_PREPROCESS
+            print("🚀 [RUNTIME] Loading OpenCLIP model...")
 
+            torch.set_grad_enabled(False)
 
-# ============================
-# LOAD PAIRWISE RANKER
-# ============================
-
-def get_ranker():
-
-    global PAIRWISE_RANKER
-
-    if PAIRWISE_RANKER is None:
-        from joblib import load
-
-        print("🚀 [RUNTIME] Loading Pairwise Ranker...")
-
-        if not PAIRWISE_PATH.exists():
-            raise RuntimeError(
-                f"No se encontró pairwise_ranker en: {PAIRWISE_PATH}"
+            self.clip_model, _, self.clip_preprocess = (
+                open_clip.create_model_and_transforms(
+                    "ViT-B-32",
+                    pretrained="openai",
+                )
             )
 
-        PAIRWISE_RANKER = load(PAIRWISE_PATH)
+            self.clip_model = self.clip_model.to(DEVICE)
+            self.clip_model.eval()
 
-        print("✅ Ranker ready")
+            print("✅ CLIP ready")
 
-    return PAIRWISE_RANKER
+        return self.clip_model, self.clip_preprocess
+
+    # -------------------------------------------------
+    # PAIRWISE RANKER
+    # -------------------------------------------------
+
+    def get_ranker(self):
+
+        if self.pairwise_ranker is None:
+
+            from joblib import load
+
+            print("🚀 [RUNTIME] Loading Pairwise Ranker...")
+
+            if not PAIRWISE_PATH.exists():
+                raise RuntimeError(
+                    f"No se encontró pairwise_ranker en: {PAIRWISE_PATH}"
+                )
+
+            self.pairwise_ranker = load(PAIRWISE_PATH)
+
+            print("✅ Ranker ready")
+
+        return self.pairwise_ranker
 
 
-# ============================
+# =====================================================
+# GLOBAL REGISTRY INSTANCE
+# =====================================================
+
+REGISTRY = ModelRegistry()
+
+
+# =====================================================
 # ENCODE IMAGE
-# ============================
+# =====================================================
 
 def encode_image(image_pil):
 
-    model, preprocess = get_clip()
+    model, preprocess = REGISTRY.get_clip()
 
     image = preprocess(image_pil).unsqueeze(0).to(DEVICE)
 
     with torch.no_grad():
+
         emb = model.encode_image(image)
-        emb = emb.cpu().numpy()[0]
+
+        # 🔥 normalización necesaria para ranking estable
+        emb = emb / emb.norm(dim=-1, keepdim=True)
+
+        emb = emb.cpu().numpy().astype("float32")[0]
 
     return emb
 
 
-# ============================
-# SCORE IMAGE
-# ============================
+# =====================================================
+# SCORE EMBEDDING
+# =====================================================
 
 def score_embedding(embedding):
 
-    ranker = get_ranker()
+    ranker = REGISTRY.get_ranker()
 
-    # fast ranking → dot product con vector w
     score = ranker.decision_function([embedding])[0]
 
     return float(score)

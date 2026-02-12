@@ -20,30 +20,27 @@ pd.set_option('display.max_colwidth', None)
 print("\n📂 Cargando embeddings...")
 
 df = pd.read_parquet(EMB_PATH)
-model = joblib.load(MODEL_PATH)
+
+loaded = joblib.load(MODEL_PATH)
+model = loaded["model"] if isinstance(loaded, dict) else loaded
 
 X = np.vstack(df["embedding"].values)
 
 print(f"Embeddings: {X.shape}")
 
 # =====================
-# EXTRAER VECTOR DE RANKING
+# NORMALIZE (MISMO QUE RUNTIME)
 # =====================
 
-print("\n🧠 Extrayendo vector de ranking...")
-
-# LogisticRegression guarda los pesos aquí
-w = model.coef_[0]
-
-print(f"Vector ranking shape: {w.shape}")
+X = X / np.linalg.norm(X, axis=1, keepdims=True)
 
 # =====================
-# FAST RANKING SCORE
+# FAST RANKING
 # =====================
 
 print("\n⚡ Calculando fast ranking score...")
 
-scores = X @ w   # producto punto vectorizado
+scores = model.decision_function(X)
 
 df["fast_rank_score"] = scores
 

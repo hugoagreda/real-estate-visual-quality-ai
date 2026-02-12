@@ -11,7 +11,8 @@ import cv2
 EMB_PATH = Path("../data/embeddings/realestate_embeddings.parquet")
 MODEL_PATH = Path("../models/quality_head.joblib")
 
-SHOW_LIMIT = 50   # cuántas imágenes revisar
+SHOW_LIMIT = 50
+USE_WINDOW = True   # desactiva si estás en entorno headless
 
 # =====================
 # LOAD DATA
@@ -28,6 +29,9 @@ le = data["label_encoder"]
 
 X = np.vstack(df["embedding"].values)
 
+# 🔥 IMPORTANTE: MISMA NORMALIZACIÓN QUE RUNTIME
+X = X / np.linalg.norm(X, axis=1, keepdims=True)
+
 # =====================
 # PREDICT PROBA
 # =====================
@@ -36,9 +40,10 @@ print("\n🧠 Calculando predicciones...")
 
 proba = model.predict_proba(X)
 
-df["predicted_label"] = le.inverse_transform(np.argmax(proba, axis=1))
+df["predicted_label"] = le.inverse_transform(
+    np.argmax(proba, axis=1)
+)
 
-# incertidumbre = 1 - confianza máxima
 df["confidence"] = np.max(proba, axis=1)
 df["uncertainty"] = 1 - df["confidence"]
 
@@ -76,14 +81,14 @@ for _, row in df_sorted.iterrows():
     print(f"Confianza: {row['confidence']:.2f}")
     print("Pulsa: 1=bad | 2=medium | 3=good | ESC=salir")
 
-    cv2.imshow("Pseudo Human Loop", img)
+    if USE_WINDOW:
+        cv2.imshow("Pseudo Human Loop", img)
 
     key = cv2.waitKey(0)
 
     if key == 27:
         break
 
-    # aquí SOLO mostramos, aún no guardamos cambios
     count += 1
 
 cv2.destroyAllWindows()

@@ -7,10 +7,17 @@ import time
 import torch
 
 IMG = 100
+
 YOLO_MODEL = None
 CLIP_MODEL = None
 CLIP_PREPROCESS = None
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+# =====================================
+# UTILS
+# =====================================
 
 def run_step(name, func, *args, **kwargs):
 
@@ -28,16 +35,16 @@ def run_step(name, func, *args, **kwargs):
 
     return result
 
-# ===== 1. DOWNLOAD ===== #
+
+# =====================================
+# 1️⃣ DOWNLOAD
+# =====================================
+
 def download_kaggle_images(
     max_new_downloads=IMG,
     timeout=10,
     sleep_time=0.05,
 ):
-
-    # =========================
-    # PATHS ROBUSTOS
-    # =========================
 
     BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -49,15 +56,7 @@ def download_kaggle_images(
 
     print("\n🚀 Iniciando descarga incremental Kaggle")
 
-    # =========================
-    # CARGAR DATASET
-    # =========================
-
     df = pd.read_csv(CSV_PATH, sep=",", engine="python")
-
-    # =========================
-    # DETECTAR EXISTENTES
-    # =========================
 
     existing_files = {p.name for p in OUTPUT_DIR.glob("*.webp")}
 
@@ -66,10 +65,6 @@ def download_kaggle_images(
     already_present = 0
 
     print(f"📦 Imágenes ya existentes detectadas: {len(existing_files)}")
-
-    # =========================
-    # PIPELINE
-    # =========================
 
     for idx, row in df.iterrows():
 
@@ -86,9 +81,7 @@ def download_kaggle_images(
         try:
             r = requests.get(url, timeout=timeout, headers=HEADERS)
 
-            if r.status_code == 200 and "image" in r.headers.get(
-                "Content-Type", ""
-            ):
+            if r.status_code == 200 and "image" in r.headers.get("Content-Type", ""):
                 with open(filename, "wb") as f:
                     f.write(r.content)
 
@@ -109,38 +102,36 @@ def download_kaggle_images(
 
         time.sleep(sleep_time)
 
-    # =========================
-    # RESULTADO FINAL
-    # =========================
-
     print("\n✅ FIN DESCARGA INCREMENTAL")
     print(f"Nuevas descargadas: {downloaded}")
     print(f"Ya existentes: {already_present}")
     print(f"Saltadas: {skipped}")
 
-# ===== 2. FILTER ===== #
+
+# =====================================
+# 2️⃣ FILTER FEATURES
+# =====================================
+
 def has_sky(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h = hsv[:, :, 0]
     mask = ((h > 90) & (h < 130))
     return np.sum(mask) / mask.size
 
+
 def edge_density(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 100, 200)
     return np.sum(edges > 0) / edges.size
+
 
 def line_density(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150)
 
     lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi/180,
-        threshold=80,
-        minLineLength=40,
-        maxLineGap=5,
+        edges, rho=1, theta=np.pi/180, threshold=80,
+        minLineLength=40, maxLineGap=5,
     )
 
     if lines is None:
@@ -148,13 +139,16 @@ def line_density(img):
 
     return len(lines) / (img.shape[0] * img.shape[1])
 
+
 def texture_variance(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     return gray.std()
 
+
 def brightness_uniformity(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     return gray.var()
+
 
 def center_texture(img):
     h, w, _ = img.shape
@@ -162,11 +156,13 @@ def center_texture(img):
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     return gray.std()
 
+
 def color_entropy(img):
     hist = cv2.calcHist([img], [0], None, [256], [0, 256])
     p = hist / np.sum(hist)
     p = p[p > 0]
     return -np.sum(p * np.log2(p))
+
 
 def edge_direction_ratio(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -181,27 +177,27 @@ def edge_direction_ratio(img):
 
     return vy / (vx + vy)
 
+
 def color_diversity(img, k=6):
     small = cv2.resize(img, (64, 64))
     data = small.reshape((-1, 3)).astype(np.float32)
 
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-
-    _, labels, centers = cv2.kmeans(
+    _, labels, _ = cv2.kmeans(
         data,
         k,
         None,
-        criteria,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0),
         3,
         cv2.KMEANS_RANDOM_CENTERS
     )
 
-    unique_labels = len(np.unique(labels))
-    return unique_labels / k
+    return len(np.unique(labels)) / k
+
 
 def saturation_variance(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     return hsv[:, :, 1].std()
+
 
 def compute_indoor_score(f):
 
@@ -218,20 +214,16 @@ def compute_indoor_score(f):
 
     return round(score, 4)
 
+
 def filter_interiors(max_images=IMG):
 
     BASE_DIR = Path(__file__).resolve().parent.parent
-
     INPUT_DIR = BASE_DIR / "data/images/kaggle_raw"
     OUTPUT_CSV = BASE_DIR / "data/datasets/interior_filter.csv"
 
     if OUTPUT_CSV.exists():
         df_results = pd.read_csv(OUTPUT_CSV)
-
-        processed = set(
-            Path(p).resolve().as_posix()
-            for p in df_results["image_path"].values
-        )
+        processed = set(Path(p).resolve().as_posix() for p in df_results["image_path"].values)
     else:
         df_results = pd.DataFrame()
         processed = set()
@@ -249,22 +241,22 @@ def filter_interiors(max_images=IMG):
         if norm_path in processed:
             continue
 
-        img = cv2.imread(str(img_path))
+        img = cv2.imread(norm_path)
         if img is None:
             continue
 
-        f = {}
-
-        f["sky"] = has_sky(img)
-        f["edges"] = edge_density(img)
-        f["lines"] = line_density(img)
-        f["texture"] = texture_variance(img)
-        f["brightness"] = brightness_uniformity(img)
-        f["center_tex"] = center_texture(img)
-        f["entropy"] = color_entropy(img)
-        f["edir"] = edge_direction_ratio(img)
-        f["color_div"] = color_diversity(img)
-        f["sat_var"] = saturation_variance(img)
+        f = {
+            "sky": has_sky(img),
+            "edges": edge_density(img),
+            "lines": line_density(img),
+            "texture": texture_variance(img),
+            "brightness": brightness_uniformity(img),
+            "center_tex": center_texture(img),
+            "entropy": color_entropy(img),
+            "edir": edge_direction_ratio(img),
+            "color_div": color_diversity(img),
+            "sat_var": saturation_variance(img),
+        }
 
         indoor_score = compute_indoor_score(f)
 
@@ -289,7 +281,11 @@ def filter_interiors(max_images=IMG):
     print(f"Nuevas procesadas: {count}")
     print(f"Total acumulado: {len(df_results)}")
 
-# ===== 3. SEMANTIC FILTER (YOLO) ===== #
+
+# =====================================
+# 3️⃣ YOLO SEMANTIC
+# =====================================
+
 def get_yolo_model():
     global YOLO_MODEL
 
@@ -300,44 +296,28 @@ def get_yolo_model():
 
     return YOLO_MODEL
 
+
 def yolo_semantic_filter():
 
     print("\n🧠 Ejecutando YOLO semantic filter")
 
     BASE_DIR = Path(__file__).resolve().parent.parent
-
     CSV_PATH = BASE_DIR / "data/datasets/interior_filter.csv"
     OUTPUT_CSV = BASE_DIR / "data/datasets/interior_semantic.csv"
 
     INTERIOR_CLASSES = [
-        "bed",
-        "couch",
-        "chair",
-        "dining table",
-        "tv",
-        "potted plant",
+        "bed", "couch", "chair", "dining table", "tv", "potted plant"
     ]
 
     df = pd.read_csv(CSV_PATH)
 
-    # =========================
-    # INCREMENTAL LOAD (NORMALIZADO)
-    # =========================
-
     if OUTPUT_CSV.exists():
         df_done = pd.read_csv(OUTPUT_CSV)
-
-        processed = set(
-            Path(p).resolve().as_posix()
-            for p in df_done["image_path"].values
-        )
-
+        processed = set(Path(p).resolve().as_posix() for p in df_done["image_path"].values)
         results = df_done.to_dict("records")
     else:
         processed = set()
         results = []
-
-    print(f"📊 Ya procesadas YOLO: {len(processed)}")
 
     MODEL = get_yolo_model()
 
@@ -361,9 +341,7 @@ def yolo_semantic_filter():
             if preds.boxes is not None else []
         )
 
-        has_interior_object = any(
-            obj in INTERIOR_CLASSES for obj in detected_names
-        )
+        has_interior_object = any(obj in INTERIOR_CLASSES for obj in detected_names)
 
         results.append({
             "image_path": img_path,
@@ -374,20 +352,19 @@ def yolo_semantic_filter():
 
         new_count += 1
 
-        if new_count % 50 == 0:
-            print(f"YOLO nuevas procesadas: {new_count}")
-
-    df_out = pd.DataFrame(results)
-    df_out.to_csv(OUTPUT_CSV, index=False)
+    pd.DataFrame(results).to_csv(OUTPUT_CSV, index=False)
 
     print("\n✅ YOLO semantic filter DONE")
     print(f"Nuevas procesadas: {new_count}")
-    print(f"Total acumulado: {len(df_out)}")
 
-# ===== 4. FINAL DATASET ===== #
+
+# =====================================
+# 4️⃣ FINAL DATASET
+# =====================================
+
 def create_final_dataset():
 
-    print("\n🧩 Creando FINAL DATASET (fusion visual + YOLO)")
+    print("\n🧩 Creando FINAL DATASET")
 
     BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -398,74 +375,40 @@ def create_final_dataset():
 
     df = pd.read_csv(INPUT_CSV)
 
-    print(f"📊 Total imágenes iniciales: {len(df)}")
-
-    # =====================
-    # FILTRO FINAL
-    # =====================
-
     df_final = df[
         (df["indoor_score"] < VISUAL_THRESHOLD) &
         (df["has_semantic_interior"] == 1)
     ].copy()
 
-    print(f"🏠 Interiores confirmados: {len(df_final)}")
-
-    # =====================
-    # QUALITY BUCKET AUTO
-    # =====================
-
     def assign_quality(row):
-
         detected = str(row["detected_objects"])
-
-        if detected.strip() == "":
-            obj_count = 0
-        else:
-            obj_count = len(detected.split(","))
+        obj_count = 0 if detected.strip() == "" else len(detected.split(","))
 
         if row["indoor_score"] < 0.45 and obj_count >= 2:
             return "good"
-
         if row["indoor_score"] < 0.60:
             return "medium"
-
         return "bad"
 
     df_final["quality_bucket"] = df_final.apply(assign_quality, axis=1)
-
-    # columnas necesarias para pipeline completo
     df_final["quality_bucket_human"] = ""
 
-    # =====================
-    # FUSIÓN FINAL
-    # =====================
-
     def merge_labels(row):
-
         human = str(row.get("quality_bucket_human", "")).strip()
-
-        if human != "" and human != "nan":
-            return human
-
-        return row["quality_bucket"]
+        return human if human not in ["", "nan"] else row["quality_bucket"]
 
     df_final["final_quality"] = df_final.apply(merge_labels, axis=1)
-
-    # =====================
-    # SAVE
-    # =====================
 
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     df_final.to_csv(OUTPUT_CSV, index=False)
 
-    print("\n✅ FINAL DATASET creado")
-    print(f"📁 Guardado en: {OUTPUT_CSV}")
+    print("✅ FINAL DATASET creado")
 
-    print("\n📊 Distribución final_quality:")
-    print(df_final["final_quality"].value_counts())
 
-# ===== 5. EMBEDDINGS ===== #
+# =====================================
+# 5️⃣ CLIP EMBEDDINGS
+# =====================================
+
 def get_clip_model():
     global CLIP_MODEL, CLIP_PREPROCESS
 
@@ -484,56 +427,33 @@ def get_clip_model():
 
     return CLIP_MODEL, CLIP_PREPROCESS
 
+
 def extract_embeddings():
+
     from PIL import Image
 
-    print("\n🧠 Extrayendo embeddings OpenCLIP (INCREMENTAL)")
+    print("\n🧠 Extrayendo embeddings OpenCLIP")
 
     BASE_DIR = Path(__file__).resolve().parent.parent
     CSV_PATH = BASE_DIR / "data/datasets/interior_final_candidates.csv"
     OUTPUT_PATH = BASE_DIR / "data/embeddings/realestate_embeddings.parquet"
 
-    # =====================
-    # LOAD DATASET
-    # =====================
-
     df = pd.read_csv(CSV_PATH)
     df = df[df["final_quality"].notna()].copy()
 
-    print(f"📊 Total imágenes dataset: {len(df)}")
-
-    # =====================
-    # LOAD EXISTING EMBEDDINGS (INCREMENTAL REAL)
-    # =====================
-
     if OUTPUT_PATH.exists():
         df_old = pd.read_parquet(OUTPUT_PATH)
-
-        processed = set(
-            Path(p).resolve().as_posix()
-            for p in df_old["image_path"].values
-        )
-
+        processed = set(Path(p).resolve().as_posix() for p in df_old["image_path"].values)
         embeddings = df_old.to_dict("records")
-
-        print(f"♻️ Embeddings existentes: {len(processed)}")
     else:
         processed = set()
         embeddings = []
-
-    # =====================
-    # LOAD MODEL GLOBAL (LAZY)
-    # =====================
 
     model, preprocess = get_clip_model()
 
     new_count = 0
 
-    # =====================
-    # PIPELINE
-    # =====================
-
-    for idx, row in df.iterrows():
+    for _, row in df.iterrows():
 
         img_path = Path(row["image_path"]).resolve()
         norm_path = img_path.as_posix()
@@ -542,16 +462,15 @@ def extract_embeddings():
             continue
 
         if not img_path.exists():
-            print(f"❌ No existe: {img_path}")
             continue
 
         try:
-            image = preprocess(
-                Image.open(img_path).convert("RGB")
-            ).unsqueeze(0).to(DEVICE)
+            with Image.open(img_path) as im:
+                image = preprocess(im.convert("RGB")).unsqueeze(0).to(DEVICE)
 
             with torch.no_grad():
                 emb = model.encode_image(image)
+                emb = emb / emb.norm(dim=-1, keepdim=True)
                 emb = emb.cpu().numpy()[0].tolist()
 
             embeddings.append({
@@ -562,28 +481,20 @@ def extract_embeddings():
 
             new_count += 1
 
-            if new_count % 50 == 0:
-                print(f"📦 Nuevas embeddings: {new_count}")
-
         except Exception as e:
             print(f"⚠️ Error con {img_path}: {e}")
 
-    # =====================
-    # SAVE
-    # =====================
-
-    print("\n💾 Guardando embeddings...")
-
     df_emb = pd.DataFrame(embeddings)
-
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     df_emb.to_parquet(OUTPUT_PATH, index=False)
 
-    print("\n✅ Embeddings actualizados")
-    print(f"Nuevas embeddings: {new_count}")
-    print(f"Total embeddings acumulados: {len(df_emb)}")
+    print(f"✅ Embeddings actualizados | Nuevos: {new_count}")
 
-# ===== BOOTSTRAP ===== #
+
+# =====================================
+# BOOTSTRAP
+# =====================================
+
 def bootstrap_dataset(img_batch=IMG):
 
     print("\n========== BOOTSTRAP DATASET ==========")
@@ -595,8 +506,8 @@ def bootstrap_dataset(img_batch=IMG):
     run_step("[4/5] CREATE FINAL DATASET", create_final_dataset)
     run_step("[5/5] EXTRACT EMBEDDINGS", extract_embeddings)
 
-    total_end = time.time()
-    print("\n🏁 BOOTSTRAP TOTAL:", round(total_end - total_start, 2), "s")
+    print("\n🏁 BOOTSTRAP TOTAL:", round(time.time() - total_start, 2), "s")
+
 
 if __name__ == "__main__":
     bootstrap_dataset()
