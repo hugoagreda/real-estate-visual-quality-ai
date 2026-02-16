@@ -20,6 +20,8 @@ QUALITY_HEAD_PATH = BASE_DIR / "models/quality_head.joblib"
 
 PAIR_SAMPLES = 5000
 
+AUTO_CONF_THRESHOLD = 0.90
+
 RANK_MAP = {
     "bad": 0,
     "medium": 1,
@@ -50,14 +52,30 @@ def load_embeddings():
 
     df = pd.concat(dfs, ignore_index=True)
 
-    # 🔥 convertir embeddings
-    df["embedding"] = df["embedding"].apply(lambda x: np.array(x, dtype=np.float32))
+    # convertir embeddings a numpy
+    df["embedding"] = df["embedding"].apply(
+        lambda x: np.array(x, dtype=np.float32)
+    )
 
-    # 🔥 deduplicar
-    df = df.drop_duplicates(subset="image_path", keep="last")
+    # pseudo-labels auto si existen
+    if "auto_quality" in df.columns and "auto_confidence" in df.columns:
 
+        mask = (
+            df["final_quality"].isna()
+            & (df["auto_confidence"] >= AUTO_CONF_THRESHOLD)
+        )
+
+        df.loc[mask, "final_quality"] = df.loc[mask, "auto_quality"]
+        df.loc[mask, "label_source"] = "auto"
+
+    # dedupe seguro
+    df = df.drop_duplicates(
+        subset=["image_path", "label_source"],
+        keep="last"
+    )
+
+    # solo entrenables
     df = df[df["final_quality"].notna()].copy()
-
     df = df.sort_values("image_path").reset_index(drop=True)
 
     print(f"\nEmbeddings totales cargados: {len(df)}")
@@ -69,8 +87,10 @@ def load_embeddings():
         print("\nFuente etiquetas:")
         print(df["label_source"].value_counts())
 
-    return df
+    dataset_hash = hash(tuple(df["image_path"]))
+    print(f"\n🔎 DATASET HASH: {dataset_hash}")
 
+    return df
 
 # =====================================
 # BUILD SAMPLE WEIGHTS
@@ -82,21 +102,19 @@ def build_sample_weights(df):
 
     weights = np.ones(len(df), dtype=np.float32)
 
-    # 🔥 humanos pesan más que auto
+    # humanos pesan más
     weights[df["label_source"] != "human"] = 0.5
 
     return weights
 
-
 # =====================================
-# NORMALIZE SAFE
+# NORMALIZE
 # =====================================
 def normalize_embeddings(X):
 
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1e-8
     return X / norms
-
 
 # =====================================
 # TRAIN PAIRWISE RANKER
@@ -108,6 +126,7 @@ def train_pairwise_ranker(df):
     X = np.vstack(df["embedding"].values)
     y = df["final_quality"].values
 
+    # 🔥 protección real
     if len(np.unique(y)) < 2:
         print("⚠️ Solo hay una clase presente. Ranker no se entrena.")
         return
@@ -137,12 +156,8 @@ def train_pairwise_ranker(df):
             attempts += 1
             continue
 
-        emb_i = X[i]
-        emb_j = X[j]
+        diff = X[i] - X[j]
 
-        diff = emb_i - emb_j
-
-        # 🔥 evitar NaNs
         if np.any(np.isnan(diff)):
             attempts += 1
             continue
@@ -174,7 +189,6 @@ def train_pairwise_ranker(df):
 
     print(f"✅ Ranker guardado en {RANKER_PATH}")
 
-
 # =====================================
 # TRAIN QUALITY HEAD
 # =====================================
@@ -191,12 +205,17 @@ def train_quality_head(df):
     y_enc = le.fit_transform(y)
 
     if len(np.unique(y_enc)) < 2:
-        print("⚠️ Solo hay una clase presente.")
+        print("⚠️ Solo hay una clase presente. Quality head no se entrena.")
         return
 
     sample_weights = build_sample_weights(df)
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # 🔥 folds dinámicos si dataset pequeño
+    n_splits = min(5, np.bincount(y_enc).min())
+    if n_splits < 2:
+        n_splits = 2
+
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
 
     acc_scores = []
     fold = 1
@@ -263,7 +282,6 @@ def train_quality_head(df):
 
     print(f"✅ Quality head guardado en {QUALITY_HEAD_PATH}")
 
-
 # =====================================
 # TRAINING PIPELINE
 # =====================================
@@ -273,6 +291,10 @@ def training_pipeline(train_ranker=True, train_quality=True):
 
     df = load_embeddings()
 
+    # 🔥 YA NO SE PARA NUNCA POR TAMAÑO
+    if len(df) < 10:
+        print("⚠️ Dataset pequeño, pero seguimos entrenando.")
+
     if train_ranker:
         train_pairwise_ranker(df)
 
@@ -280,7 +302,6 @@ def training_pipeline(train_ranker=True, train_quality=True):
         train_quality_head(df)
 
     print("\n🏁 TRAINING COMPLETADO")
-
 
 # =====================================
 # ENTRYPOINT

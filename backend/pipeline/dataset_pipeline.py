@@ -10,11 +10,12 @@ import cv2
 import requests
 import time
 import torch
+import joblib
 
 from runtime.runtime_models import encode_image
 from pipeline.training_pipeline import training_pipeline
 
-IMG = 50 # 500 para auto
+IMG = 100 # 500 para auto
 YOLO_MODEL = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -121,7 +122,7 @@ def has_sky(img):
 
 def edge_density(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 100, 200)
+    edges = cv2.Canny(gray, 50, 120)
     return np.sum(edges > 0) / edges.size
 
 def line_density(img):
@@ -129,14 +130,18 @@ def line_density(img):
     edges = cv2.Canny(gray, 50, 150)
 
     lines = cv2.HoughLinesP(
-        edges, rho=1, theta=np.pi/180, threshold=80,
-        minLineLength=40, maxLineGap=5,
+        edges,
+        rho=1,
+        theta=np.pi/180,
+        threshold=80,
+        minLineLength=40,
+        maxLineGap=5,
     )
 
     if lines is None:
         return 0
-
-    return len(lines) / (img.shape[0] * img.shape[1])
+    
+    return len(lines) / 1000
 
 def texture_variance(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -190,7 +195,7 @@ def saturation_variance(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     return hsv[:, :, 1].std()
 
-def compute_indoor_score(f):
+
 
     score = 0
     score += (1 - min(f["sky"]*3, 1)) * 0.12
@@ -205,27 +210,71 @@ def compute_indoor_score(f):
 
     return round(score, 4)
 
+def compute_indoor_score(f):
+    score = 0
+    score += (1 - min(f["sky"]*2, 1)) * 0.08
+    score += min(f["edges"]*6, 1) * 0.14
+    score += min(f["lines"], 1) * 0.12
+    score += min(f["texture"]/80, 1) * 0.14
+    score += min(f["center_tex"]/60, 1) * 0.14
+    score += min(f["entropy"]/6, 1) * 0.10
+    score += min(f["brightness"]/10000, 1) * 0.08
+    score += f["color_div"] * 0.05
+    score += (1 - min(f["sat_var"]/80, 1)) * 0.05
+
+    return round(score, 4)
+
 def filter_interiors(max_images=IMG):
 
     BASE_DIR = Path(__file__).resolve().parent.parent
     INPUT_DIR = BASE_DIR / "data/images/kaggle_raw"
+    FINAL_CSV = BASE_DIR / "data/datasets/interior_final_candidates.csv"
 
     rows = []
 
+    # =====================================
+    # 🔥 CARGAR TODAS LAS IMÁGENES FÍSICAS
+    # =====================================
     images = list(INPUT_DIR.glob("*.webp"))
 
+    # =====================================
+    # 🔥 FIX CRÍTICO — FILTRADO INCREMENTAL REAL
+    # =====================================
+    if FINAL_CSV.exists():
+
+        df_existing = pd.read_csv(FINAL_CSV, dtype=str)
+
+        if "image_path" in df_existing.columns:
+            existing_paths = set(df_existing["image_path"].astype(str))
+        else:
+            existing_paths = set()
+
+        images = [
+            p for p in images
+            if p.resolve().as_posix() not in existing_paths
+        ]
+
+    # =====================================
+    # LIMIT OPCIONAL
+    # =====================================
     if max_images is not None:
         images = images[:max_images]
 
     total = len(images)
 
-    print(f"\n🧠 Analizando {total} imágenes (feature filter)...")
+    if total == 0:
+        print("\n⚠️ No hay imágenes nuevas para feature filter.")
+        return None
 
+    print(f"\n🧠 Analizando {total} imágenes NUEVAS (feature filter)...")
+
+    # =====================================
+    # PROGRESS BAR
+    # =====================================
     def print_progress(current, total):
 
         bar_len = 30
         filled_len = int(bar_len * current / total)
-
         bar = "█" * filled_len + "░" * (bar_len - filled_len)
 
         print(
@@ -234,9 +283,13 @@ def filter_interiors(max_images=IMG):
             flush=True
         )
 
+    # =====================================
+    # LOOP PRINCIPAL
+    # =====================================
     for i, img_path in enumerate(images, start=1):
 
         img = cv2.imread(str(img_path))
+
         if img is None:
             continue
 
@@ -259,6 +312,7 @@ def filter_interiors(max_images=IMG):
             rows.append({
                 "image_path": img_path.resolve().as_posix(),
                 "indoor_score": indoor_score,
+                "is_new": True,   # 🔥 IMPORTANTÍSIMO PARA YOLO
                 **f
             })
 
@@ -269,13 +323,19 @@ def filter_interiors(max_images=IMG):
 
     print("\n")
 
+    if len(rows) == 0:
+        print("⚠️ No se generaron features.")
+        return None
+
     df_filter = pd.DataFrame(rows)
 
-    if len(df_filter) > 0:
-        print("\n📊 FILTER STATS")
-        print("  indoor_score mean:", round(df_filter["indoor_score"].mean(),3))
-        print("  indoor_score std:", round(df_filter["indoor_score"].std(),3))
-        print("  edges mean:", round(df_filter["edges"].mean(),3))
+    # =====================================
+    # STATS
+    # =====================================
+    print("\n📊 FILTER STATS")
+    print("  indoor_score mean:", round(df_filter["indoor_score"].mean(),3))
+    print("  indoor_score std:", round(df_filter["indoor_score"].std(),3))
+    print("  edges mean:", round(df_filter["edges"].mean(),3))
 
     return df_filter
 
@@ -316,38 +376,25 @@ def yolo_semantic_filter(df_filter):
 
     MODEL = get_yolo_model()
 
-    # =====================================
-    # 🔥 CLASES GOD
-    # =====================================
     CORE_OBJECTS = {
-        "bed", "couch", "chair", "dining table",
-        "tv", "refrigerator", "sink", "oven", "microwave"
+        "bed","couch","chair","dining table",
+        "tv","refrigerator","sink","oven","microwave"
     }
 
     SECONDARY_OBJECTS = {
-        "potted plant", "person", "umbrella",
-        "vase", "clock", "book", "laptop"
+        "potted plant","person","umbrella",
+        "vase","clock","book","laptop"
     }
 
     results = []
 
     print(f"\n🧠 Ejecutando YOLO semantic filter GOD ({total} imágenes)")
 
-    # =====================================
-    # PROGRESS BAR
-    # =====================================
     def print_progress(current, total):
-
         bar_len = 30
         filled_len = int(bar_len * current / total)
-
-        bar = "█" * filled_len + "░" * (bar_len - filled_len)
-
-        print(
-            f"\r🤖 [{bar}] {current}/{total}",
-            end="",
-            flush=True
-        )
+        bar = "█"*filled_len + "░"*(bar_len-filled_len)
+        print(f"\r🤖 [{bar}] {current}/{total}", end="", flush=True)
 
     # =====================================
     # LOOP PRINCIPAL
@@ -368,10 +415,6 @@ def yolo_semantic_filter(df_filter):
             if preds.boxes is not None else []
         )
 
-        # =====================================
-        # ROOM CONTEXT LOGIC (GOD MODE)
-        # =====================================
-
         unique_objects = set(detected_names)
 
         core_objects_present = unique_objects.intersection(CORE_OBJECTS)
@@ -380,24 +423,10 @@ def yolo_semantic_filter(df_filter):
         core_count = len(core_objects_present)
         secondary_count = len(secondary_objects_present)
 
-        # -------------------------------------
-        # ROOM VARIETY SCORE
-        # -------------------------------------
         variety_score = min(core_count / 2, 1.0)
-
-        # -------------------------------------
-        # CORE PRESENCE
-        # -------------------------------------
         core_presence = 1.0 if core_count >= 1 else 0.0
-
-        # -------------------------------------
-        # SECONDARY NOISE
-        # -------------------------------------
         secondary_noise = secondary_count / (core_count + secondary_count + 1)
 
-        # -------------------------------------
-        # ROOM SCORE FINAL
-        # -------------------------------------
         room_score = (
             0.5 * variety_score +
             0.3 * indoor_score +
@@ -406,16 +435,12 @@ def yolo_semantic_filter(df_filter):
 
         room_score = round(float(room_score), 4)
 
-        # threshold GOD anti-fachadas
-        has_interior = int(room_score >= 0.55)
-
         results.append({
             "image_path": img_path,
             "indoor_score": indoor_score,
             "room_score": room_score,
             "core_count": core_count,
             "secondary_count": secondary_count,
-            "has_semantic_interior": has_interior,
             "detected_objects": ",".join(detected_names)
         })
 
@@ -430,14 +455,36 @@ def yolo_semantic_filter(df_filter):
         return None
 
     # =====================================
+    # 🔥 THRESHOLD ADAPTATIVO INTELIGENTE
+    # =====================================
+
+    BASE_THRESHOLD = 0.55
+    MIN_THRESHOLD = 0.45
+
+    room_scores = df_semantic["room_score"].values
+
+    # Si el lote es pequeño o los scores vienen bajos → ajustar
+    if len(room_scores) < 40:
+
+        dynamic_thr = np.percentile(room_scores, 85)
+        dynamic_thr = max(dynamic_thr, MIN_THRESHOLD)
+        dynamic_thr = min(dynamic_thr, BASE_THRESHOLD)
+
+        print(f"🧠 Threshold dinámico activado: {round(dynamic_thr,3)}")
+
+    else:
+        dynamic_thr = BASE_THRESHOLD
+
+    df_semantic["has_semantic_interior"] = (
+        df_semantic["room_score"] >= dynamic_thr
+    ).astype(int)
+
+    # =====================================
     # GUARDADO
     # =====================================
     OUTPUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     df_semantic.to_csv(OUTPUT_CSV, index=False)
 
-    # =====================================
-    # STATS EJECUCIÓN
-    # =====================================
     interiors = (df_semantic["has_semantic_interior"] == 1).sum()
     total = len(df_semantic)
 
@@ -553,7 +600,7 @@ def create_final_dataset(df_semantic=None):
             return
 
     # =====================================
-    # AUTO QUALITY POR ROOM SCORE
+    # 🔥 AUTO QUALITY CORREGIDO (YA NO ELIMINA BAD)
     # =====================================
     def assign_quality(score):
         try:
@@ -566,7 +613,7 @@ def create_final_dataset(df_semantic=None):
         elif s >= 0.60:
             return "medium"
         else:
-            return None
+            return "bad"
 
     df_new["quality_bucket"] = df_new["room_score"].apply(assign_quality)
 
@@ -601,14 +648,11 @@ def create_final_dataset(df_semantic=None):
         # 🔥 SOLO añadir imágenes realmente nuevas
         new_only = df_new[~df_new.index.isin(df_old.index)].copy()
 
-        # columnas base para nuevas
         new_only["quality_bucket_human"] = ""
         new_only["final_quality"] = new_only["quality_bucket"]
         new_only["is_new"] = True
 
-        # mantener TODO lo antiguo intacto
         df_final = pd.concat([df_old, new_only])
-
         df_final = df_final.reset_index()
 
     else:
@@ -620,7 +664,6 @@ def create_final_dataset(df_semantic=None):
         df_final = df_new.reset_index()
 
     # =====================================
-    # SEGURIDAD EXTRA:
     # SI TIENE LABEL HUMANO → NO ES NEW
     # =====================================
     if "quality_bucket_human" in df_final.columns:
@@ -642,7 +685,7 @@ def create_final_dataset(df_semantic=None):
     df_final.to_csv(OUTPUT_CSV, index=False)
 
     # =====================================
-    # LOGS ÚTILES
+    # LOGS
     # =====================================
     print("\n📊 DATASET STATE")
     print("  total dataset:", len(df_final))
@@ -808,27 +851,28 @@ def extract_embeddings(auto_mode=False):
         print("❌ No existe CSV dataset.")
         return
 
-    # 🔥 leer como string para evitar líos de tipos
     df = pd.read_csv(CSV_PATH, dtype=str)
 
-    # =====================================
-    # 🔥 FIX CRASH dtype is_new
-    # =====================================
+    # FIX dtype
     if "is_new" in df.columns:
         df["is_new"] = df["is_new"].astype(str).str.lower() == "true"
     else:
         df["is_new"] = True
 
     # =====================================
-    # 🔥 MODO INTELIGENTE (FIRST RUN vs INCREMENTAL)
+    # 🔥 LÓGICA CORRECTA
+    # AUTO = SIEMPRE INCREMENTAL
+    # HUMAN = full solo primera vez
     # =====================================
-    if not OUTPUT_PATH.exists():
-        print("🆕 Primera ejecución detectada → generando embeddings completos")
-        df_new = df.copy()
-    else:
+    if auto_mode:
         df_new = df[df["is_new"] == True].copy()
+    else:
+        if not OUTPUT_PATH.exists():
+            print("🆕 Primera ejecución detectada → generando embeddings completos")
+            df_new = df.copy()
+        else:
+            df_new = df[df["is_new"] == True].copy()
 
-    # Solo imágenes con etiqueta final
     df_new = df_new[df_new["final_quality"].notna()].copy()
 
     total = len(df_new)
@@ -841,9 +885,6 @@ def extract_embeddings(auto_mode=False):
 
     print(f"\n🧠 Extrayendo embeddings ({total} imágenes)")
 
-    # =====================================
-    # LOOP
-    # =====================================
     for i, (_, row) in enumerate(df_new.iterrows(), 1):
 
         img_path = Path(row["image_path"])
@@ -875,16 +916,22 @@ def extract_embeddings(auto_mode=False):
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     # =====================================
-    # 🔥 APPEND SI YA EXISTE
+    # APPEND SEGURO
     # =====================================
+    df_new_emb = pd.DataFrame(rows)
+
     if OUTPUT_PATH.exists():
         df_old = pd.read_parquet(OUTPUT_PATH)
-        df_new_emb = pd.DataFrame(rows)
 
         df_final = pd.concat([df_old, df_new_emb], ignore_index=True)
-        df_final = df_final.drop_duplicates(subset="image_path", keep="last")
+
+        # 🔥 IMPORTANTE: dedupe por imagen + source
+        df_final = df_final.drop_duplicates(
+            subset=["image_path", "label_source"],
+            keep="last"
+        )
     else:
-        df_final = pd.DataFrame(rows)
+        df_final = df_new_emb
 
     df_final.to_parquet(OUTPUT_PATH, index=False)
 
@@ -892,11 +939,12 @@ def extract_embeddings(auto_mode=False):
     print(f"📂 Guardados en: {OUTPUT_PATH}")
 
     processed_paths = set(df_new["image_path"])
-    df.loc[df["image_path"].isin(processed_paths), "is_new"] = False
 
-    # 🔥 asegurar tipo bool real
+    # SOLO HUMAN CIERRA CICLO
+    if not auto_mode:
+        df.loc[df["image_path"].isin(processed_paths), "is_new"] = False
+
     df["is_new"] = df["is_new"].astype(bool)
-
     df.to_csv(CSV_PATH, index=False)
 
     print("\n📊 EMBEDDINGS STATS")
@@ -915,14 +963,10 @@ def auto_label_step():
     EMB_DIR = BASE_DIR / "data/embeddings"
     MODEL_PATH = BASE_DIR / "models/quality_head.joblib"
 
-    # =====================================
-    # CHECKS
-    # =====================================
     if not MODEL_PATH.exists():
         print("⚠️ No existe quality_head. Auto label cancelado.")
         return
 
-    # 🔥 CARGAR EMBEDDINGS ACUMULATIVOS (FIX BUG 2)
     files = [
         EMB_DIR / "human_embeddings.parquet",
         EMB_DIR / "auto_round_embeddings.parquet",
@@ -936,15 +980,11 @@ def auto_label_step():
 
     df_emb = pd.concat(dfs, ignore_index=True)
 
-    # =====================================
-    # DATASET
-    # =====================================
     df = pd.read_csv(CSV_PATH, dtype=str)
 
     df["quality_bucket_human"] = df["quality_bucket_human"].fillna("")
     df["is_new"] = df["is_new"].astype(str).str.lower().isin(["true","1"])
 
-    # 🔥 SOLO NUEVAS SIN LABEL HUMANO (FIX BUG 3)
     pending = df[
         (df["quality_bucket_human"] == "") &
         (df["is_new"] == True)
@@ -954,18 +994,10 @@ def auto_label_step():
         print("✅ No hay imágenes nuevas que auto-etiquetar.")
         return
 
-    # =====================================
-    # LOAD MODEL
-    # =====================================
-    import joblib
-
     data = joblib.load(MODEL_PATH)
     model = data["model"]
     le = data["label_encoder"]
 
-    # =====================================
-    # MERGE CON EMBEDDINGS
-    # =====================================
     merged = pending.merge(
         df_emb[["image_path", "embedding"]],
         on="image_path",
@@ -978,9 +1010,6 @@ def auto_label_step():
         print("⚠️ No hay embeddings disponibles para auto label.")
         return
 
-    # =====================================
-    # PREDICCIÓN
-    # =====================================
     X = np.vstack(merged["embedding"].values)
 
     norms = np.linalg.norm(X, axis=1, keepdims=True)
@@ -993,10 +1022,16 @@ def auto_label_step():
 
     updated = 0
 
-    for img_path, label in zip(merged["image_path"], labels):
+    for i, (img_path, label) in enumerate(zip(merged["image_path"], labels)):
+
         mask = df["image_path"] == img_path
+
         df.loc[mask, "final_quality"] = label
-        df.loc[mask, "is_new"] = False
+        df.loc[mask, "auto_quality"] = label
+        df.loc[mask, "auto_confidence"] = float(np.max(proba[i]))
+        df.loc[mask, "label_source"] = "auto"
+
+        # 🔥 NO tocar is_new aquí
         updated += 1
 
     df.to_csv(CSV_PATH, index=False)
@@ -1014,6 +1049,7 @@ def bootstrap_dataset(auto_mode=False, img_batch=IMG):
         print("\n========== BOOTSTRAP DATASET (AUTO MODE) ==========")
     else:
         print("\n========== BOOTSTRAP DATASET (HUMAN MODE) ==========")
+
     total_start = time.time()
 
     run_step("[1/8] DOWNLOAD", download_kaggle_images, max_new_downloads=img_batch)
@@ -1021,14 +1057,18 @@ def bootstrap_dataset(auto_mode=False, img_batch=IMG):
     df_semantic = run_step("[3/8] YOLO SEMANTIC", yolo_semantic_filter, df_filter)
     run_step("[4/8] PRUNE BAD IMAGES", prune_bad_images, df_semantic)
     run_step("[5/8] CREATE FINAL DATASET", create_final_dataset, df_semantic)
-    
+
     if auto_mode:
-        run_step("[6/8] AUTO LABEL", auto_label_step)
+        run_step("[6/8] EXTRACT EMBEDDINGS", extract_embeddings, True)
+        run_step("[7/8] AUTO LABEL", auto_label_step)
+
     else:
+
         run_step("[6/8] HUMAN LABEL", human_label_step)
-        
-    run_step("[7/8] EXTRACT EMBEDDINGS", extract_embeddings, auto_mode)
+        run_step("[7/8] EXTRACT EMBEDDINGS", extract_embeddings, False)
+
     run_step("[8/8] TRAINING PIPELINE", training_pipeline)
+
     print("\n🏁 BOOTSTRAP TOTAL:", round(time.time() - total_start, 2), "s")
 
 if __name__ == "__main__":
