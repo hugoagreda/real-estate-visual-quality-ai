@@ -1,0 +1,29 @@
+image_path,indoor_score,room_score,core_count,secondary_count,detected_objects,has_semantic_interior
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_0.webp,0.6563,0.1969,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_1.webp,0.6322,0.0948,0,1,person,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_11.webp,0.4481,0.4172,2,3,"couch,remote,chair,couch,remote,book,potted plant,book,vase",0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_12.webp,0.688,0.2064,0,0,car,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_17.webp,0.525,0.1575,0,0,"truck,car",0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_2.webp,0.5289,0.1587,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_20.webp,0.5208,0.4281,2,3,"person,tv,potted plant,vase,bed,bench",0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_21.webp,0.5085,0.1525,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_22.webp,0.5974,0.1792,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_25.webp,0.6819,0.2046,0,0,bench,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_26.webp,0.5304,0.1591,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_27.webp,0.7723,0.2317,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_28.webp,0.2588,0.0776,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_3.webp,0.7325,0.2198,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_34.webp,0.7644,0.1147,0,1,"potted plant,potted plant,potted plant,potted plant",0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_35.webp,0.6074,0.0911,0,1,"laptop,keyboard",0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_37.webp,0.5535,0.1661,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_38.webp,0.549,0.1647,0,0,"car,car,car,car,car,car,car,car,car",0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_4.webp,0.6916,0.2075,0,0,bench,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_42.webp,0.5953,0.1786,0,0,suitcase,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_43.webp,0.6165,0.185,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_45.webp,0.5029,0.1509,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_46.webp,0.466,0.0699,0,1,person,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_48.webp,0.4722,0.1417,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_49.webp,0.6522,0.1957,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_50.webp,0.6494,0.1948,0,0,boat,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_8.webp,0.5898,0.1769,0,0,,0
+C:/Users/hugoagreda22/Downloads/ImageScoreAI/backend/data/images/kaggle_raw/img_9.webp,0.4894,0.1468,0,0,,0

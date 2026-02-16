@@ -15,7 +15,7 @@ import joblib
 from runtime.runtime_models import encode_image
 from pipeline.training_pipeline import training_pipeline
 
-IMG = 100 # 500 para auto
+IMG = 50
 YOLO_MODEL = None
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -194,21 +194,6 @@ def color_diversity(img, k=6):
 def saturation_variance(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     return hsv[:, :, 1].std()
-
-
-
-    score = 0
-    score += (1 - min(f["sky"]*3, 1)) * 0.12
-    score += min(f["edges"]*10, 1) * 0.12
-    score += min(f["lines"]*90000, 1) * 0.12
-    score += min(f["texture"]/80, 1) * 0.12
-    score += min(f["center_tex"]/60, 1) * 0.12
-    score += min(f["entropy"]/6, 1) * 0.10
-    score += min(f["brightness"]/6000, 1) * 0.10
-    score += (1 - f["color_div"]) * 0.10
-    score += (1 - min(f["sat_var"]/80, 1)) * 0.10
-
-    return round(score, 4)
 
 def compute_indoor_score(f):
     score = 0
@@ -957,16 +942,27 @@ def auto_label_step():
 
     print("\n🤖 AUTO LABEL STEP (MODEL ASSISTED)")
 
+    import pandas as pd
+    import numpy as np
+    import joblib
+    from pathlib import Path
+
     BASE_DIR = Path(__file__).resolve().parent.parent
 
     CSV_PATH = BASE_DIR / "data/datasets/interior_final_candidates.csv"
     EMB_DIR = BASE_DIR / "data/embeddings"
     MODEL_PATH = BASE_DIR / "models/quality_head.joblib"
 
+    # =====================================
+    # CHECK MODEL
+    # =====================================
     if not MODEL_PATH.exists():
         print("⚠️ No existe quality_head. Auto label cancelado.")
         return
 
+    # =====================================
+    # LOAD EMBEDDINGS
+    # =====================================
     files = [
         EMB_DIR / "human_embeddings.parquet",
         EMB_DIR / "auto_round_embeddings.parquet",
@@ -980,11 +976,33 @@ def auto_label_step():
 
     df_emb = pd.concat(dfs, ignore_index=True)
 
+    # =====================================
+    # LOAD DATASET CSV
+    # =====================================
     df = pd.read_csv(CSV_PATH, dtype=str)
 
-    df["quality_bucket_human"] = df["quality_bucket_human"].fillna("")
-    df["is_new"] = df["is_new"].astype(str).str.lower().isin(["true","1"])
+    # columnas seguras
+    if "quality_bucket_human" not in df.columns:
+        df["quality_bucket_human"] = ""
 
+    if "auto_quality" not in df.columns:
+        df["auto_quality"] = ""
+
+    if "auto_confidence" not in df.columns:
+        df["auto_confidence"] = np.nan
+
+    if "label_source" not in df.columns:
+        df["label_source"] = ""
+
+    # 🔥 FIX CRÍTICO: convertir auto_confidence a float
+    df["auto_confidence"] = pd.to_numeric(df["auto_confidence"], errors="coerce")
+
+    # bool seguro
+    df["is_new"] = df["is_new"].astype(str).str.lower().isin(["true", "1"])
+
+    # =====================================
+    # FILTRAR PENDIENTES
+    # =====================================
     pending = df[
         (df["quality_bucket_human"] == "") &
         (df["is_new"] == True)
@@ -994,10 +1012,16 @@ def auto_label_step():
         print("✅ No hay imágenes nuevas que auto-etiquetar.")
         return
 
+    # =====================================
+    # LOAD MODEL
+    # =====================================
     data = joblib.load(MODEL_PATH)
     model = data["model"]
     le = data["label_encoder"]
 
+    # =====================================
+    # MERGE EMBEDDINGS
+    # =====================================
     merged = pending.merge(
         df_emb[["image_path", "embedding"]],
         on="image_path",
@@ -1010,18 +1034,27 @@ def auto_label_step():
         print("⚠️ No hay embeddings disponibles para auto label.")
         return
 
+    # =====================================
+    # NORMALIZE
+    # =====================================
     X = np.vstack(merged["embedding"].values)
 
     norms = np.linalg.norm(X, axis=1, keepdims=True)
     norms[norms == 0] = 1e-8
     X = X / norms
 
+    # =====================================
+    # PREDICT
+    # =====================================
     proba = model.predict_proba(X)
     preds = np.argmax(proba, axis=1)
     labels = le.inverse_transform(preds)
 
     updated = 0
 
+    # =====================================
+    # WRITE BACK
+    # =====================================
     for i, (img_path, label) in enumerate(zip(merged["image_path"], labels)):
 
         mask = df["image_path"] == img_path
@@ -1031,9 +1064,12 @@ def auto_label_step():
         df.loc[mask, "auto_confidence"] = float(np.max(proba[i]))
         df.loc[mask, "label_source"] = "auto"
 
-        # 🔥 NO tocar is_new aquí
+        # 🔥 NO tocar is_new
         updated += 1
 
+    # =====================================
+    # SAVE
+    # =====================================
     df.to_csv(CSV_PATH, index=False)
 
     print("\n📊 AUTO LABEL STATS")
@@ -1074,8 +1110,6 @@ def bootstrap_dataset(auto_mode=False, img_batch=IMG):
 if __name__ == "__main__":
 
     import sys
-
-    # 🔥 Detecta si ejecutas con --auto
     auto_mode = "--auto" in sys.argv
 
     bootstrap_dataset(auto_mode=auto_mode)
