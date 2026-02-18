@@ -77,6 +77,8 @@ def load_embeddings():
             if col not in df_csv.columns:
                 df_csv[col] = np.nan if col == "auto_confidence" else ""
 
+        # Avoid collisions with parquet columns (e.g. final_quality)
+        # and then consolidate with CSV values as source of truth.
         df = df.merge(
             df_csv[[
                 "image_path",
@@ -84,10 +86,41 @@ def load_embeddings():
                 "auto_quality",
                 "auto_confidence",
                 "label_source"
-            ]],
+            ]].rename(columns={
+                "final_quality": "final_quality_csv",
+                "auto_quality": "auto_quality_csv",
+                "auto_confidence": "auto_confidence_csv",
+                "label_source": "label_source_csv",
+            }),
             on="image_path",
             how="left"
         )
+
+        if "final_quality" not in df.columns:
+            df["final_quality"] = np.nan
+        if "auto_quality" not in df.columns:
+            df["auto_quality"] = np.nan
+        if "auto_confidence" not in df.columns:
+            df["auto_confidence"] = np.nan
+        if "label_source" not in df.columns:
+            df["label_source"] = np.nan
+
+        df["final_quality"] = df["final_quality_csv"].combine_first(df["final_quality"])
+        df["auto_quality"] = df["auto_quality_csv"].combine_first(df["auto_quality"])
+        df["auto_confidence"] = df["auto_confidence_csv"].combine_first(df["auto_confidence"])
+        df["label_source"] = df["label_source_csv"].combine_first(df["label_source"])
+
+        df = df.drop(columns=[
+            "final_quality_csv",
+            "auto_quality_csv",
+            "auto_confidence_csv",
+            "label_source_csv",
+        ])
+
+    # Ensure expected columns always exist for downstream logic.
+    for col in ["final_quality", "auto_quality", "auto_confidence", "label_source"]:
+        if col not in df.columns:
+            df[col] = np.nan if col == "auto_confidence" else ""
 
     # =====================================
     # 🔥 PSEUDO LABELS AUTO SI EXISTEN

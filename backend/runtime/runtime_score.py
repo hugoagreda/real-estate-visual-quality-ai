@@ -2,13 +2,13 @@ from pathlib import Path
 from PIL import Image
 from .runtime_models import encode_image, score_embedding
 
+from .runtime_visual_critic import visual_review
 VALID_EXT = {".webp", ".jpg", ".jpeg", ".png"}
 
 
 # =====================================
 # SCORE IMAGE (PATH VERSION)
 # =====================================
-
 def score_image(image_path: str, return_embedding: bool = False):
 
     img_path = Path(image_path).resolve()
@@ -40,10 +40,16 @@ def score_image(image_path: str, return_embedding: bool = False):
 # =====================================
 # SCORE IMAGE (PIL VERSION) ← API READY
 # =====================================
+def score_image_pil(image, return_embedding=False, with_review=True):
 
-def score_image_pil(image, return_embedding=False):
-
+    # =====================================
+    # ENCODE IMAGE → EMBEDDING
+    # =====================================
     embedding = encode_image(image)
+
+    # =====================================
+    # SCORE MODEL
+    # =====================================
     score_data = score_embedding(embedding)
 
     result = {
@@ -51,16 +57,36 @@ def score_image_pil(image, return_embedding=False):
         "margin": float(score_data["margin"]),
     }
 
+    # =====================================
+    # VISUAL REVIEW (MODEL-AWARE CRITIC)
+    # =====================================
+    if with_review:
+        try:
+            critic = visual_review(
+                image=image,
+                score=result["score"],
+                margin=result["margin"],
+            )
+
+            # Seguridad por si critic devuelve algo raro
+            result["caption"] = critic.get("caption", "")
+            result["review"] = critic.get("review", [])
+
+        except Exception as e:
+            result["caption"] = ""
+            result["review"] = [f"⚠️ critic error: {e}"]
+
+    # =====================================
+    # OPTIONAL EMBEDDING RETURN
+    # =====================================
     if return_embedding:
         result["embedding"] = embedding
 
     return result
 
-
 # =====================================
 # SCORE BATCH (DESKTOP / TESTING)
 # =====================================
-
 def score_folder(folder_path: str):
 
     folder = Path(folder_path).resolve()

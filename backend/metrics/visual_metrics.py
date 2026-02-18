@@ -207,3 +207,110 @@ def compute_all_metrics(image: np.ndarray) -> dict:
         "color": compute_color_score(image),
         "clutter": compute_clutter_score(image),
     }
+    
+# =====================================================
+# VISUAL REVIEW (EXPLAINABLE CRITIC)
+# =====================================================
+
+def visual_review(image, score: float, margin: float):
+
+    """
+    Genera explicación visual basada en:
+    - score del modelo
+    - métricas interpretables (lighting, sharpness, etc)
+    """
+
+    review = []
+    caption = "Interior scene"
+
+    # -------------------------------------
+    # Convertir a numpy si viene PIL
+    # -------------------------------------
+    if not isinstance(image, np.ndarray):
+        image = np.array(image)
+
+    # PIL -> RGB
+    if image.shape[-1] == 3:
+        img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    else:
+        img_bgr = image
+
+    # -------------------------------------
+    # METRICS
+    # -------------------------------------
+    metrics = compute_all_metrics(img_bgr)
+
+    lighting = metrics["lighting"]
+    sharpness = metrics["sharpness"]
+    composition = metrics["composition"]
+    color = metrics["color"]
+    clutter = metrics["clutter"]
+
+    # -------------------------------------
+    # SCORE-BASED FEEDBACK (modelo real)
+    # -------------------------------------
+    if score > 0.85:
+        review.append("✔ Imagen muy sólida visualmente")
+    elif score > 0.65:
+        review.append("👍 Buena base visual con margen de mejora")
+    else:
+        review.append("⚠️ Calidad visual baja según el modelo")
+
+    if margin < 0.15:
+        review.append("🤔 El modelo no está completamente seguro del ranking")
+
+    # -------------------------------------
+    # LIGHTING
+    # -------------------------------------
+    if lighting < 40:
+        review.append("💡 Iluminación pobre o mal balanceada")
+    elif lighting > 75:
+        review.append("🌞 Iluminación natural bien equilibrada")
+
+    # -------------------------------------
+    # SHARPNESS
+    # -------------------------------------
+    if sharpness < 35:
+        review.append("📉 Posible falta de nitidez o ligera borrosidad")
+    elif sharpness > 80:
+        review.append("🔎 Imagen muy nítida")
+
+    # -------------------------------------
+    # COMPOSITION
+    # -------------------------------------
+    if composition < 40:
+        review.append("📐 Líneas inclinadas o encuadre mejorable")
+    elif composition > 80:
+        review.append("📏 Buena alineación arquitectónica")
+
+    # -------------------------------------
+    # COLOR
+    # -------------------------------------
+    if color < 40:
+        review.append("🎨 Posible dominante de color o saturación poco natural")
+    elif color > 75:
+        review.append("🎨 Balance de color agradable")
+
+    # -------------------------------------
+    # CLUTTER
+    # -------------------------------------
+    if clutter < 35:
+        review.append("🧱 Escena visualmente cargada o con exceso de objetos")
+    elif clutter > 80:
+        review.append("🧘 Espacio limpio y ordenado visualmente")
+
+    # -------------------------------------
+    # CAPTION SIMPLE (para UI)
+    # -------------------------------------
+    if clutter > 70 and lighting > 70:
+        caption = "Clean and bright interior"
+    elif clutter < 40:
+        caption = "Busy interior scene"
+    else:
+        caption = "Standard interior"
+
+    return {
+        "caption": caption,
+        "review": review,
+        "metrics": metrics,   # 👈 esto es oro para el frontend luego
+    }

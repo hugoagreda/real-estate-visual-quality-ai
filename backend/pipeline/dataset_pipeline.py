@@ -1006,8 +1006,11 @@ def extract_embeddings(auto_mode=False):
 # =====================================
 def auto_label_step():
 
-    print("\n🤖 AUTO LABEL STEP (MODEL ASSISTED - PRO)")
+    print("\n🤖 AUTO LABEL STEP (MODEL ASSISTED)")
 
+    import pandas as pd
+    import numpy as np
+    import joblib
     from pathlib import Path
 
     BASE_DIR = Path(__file__).resolve().parent.parent
@@ -1016,7 +1019,8 @@ def auto_label_step():
     EMB_DIR = BASE_DIR / "data/embeddings"
     MODEL_PATH = BASE_DIR / "models/quality_head.joblib"
 
-    CONF_THRESHOLD = 0.72   # 🔥 magia real aquí
+    # 🔥 Margin threshold (MUCHO más estable que probabilidad absoluta)
+    CONF_THRESHOLD = 0.08
 
     # =====================================
     # CHECK MODEL
@@ -1113,33 +1117,40 @@ def auto_label_step():
     rejected = 0
 
     # =====================================
-    # WRITE BACK (CONFIDENCE GATED)
+    # WRITE BACK (MARGIN CONFIDENCE)
     # =====================================
     for i, (img_path, label) in enumerate(zip(merged["image_path"], labels)):
 
-        conf = float(np.max(proba[i]))
+        # 🔥 margin confidence real
+        sorted_proba = np.sort(proba[i])
+        conf = float(sorted_proba[-1] - sorted_proba[-2])
+
+        # boost suave early-stage
+        if label == "good":
+            conf += 0.02
+
         mask = df["image_path"] == img_path
 
         df.loc[mask, "auto_quality"] = label
         df.loc[mask, "auto_confidence"] = conf
 
-        # 🔥 SOLO SI CONFIANZA ALTA → FINAL QUALITY
         if conf >= CONF_THRESHOLD:
-
             df.loc[mask, "final_quality"] = label
             df.loc[mask, "label_source"] = "auto"
-
             accepted += 1
         else:
             rejected += 1
 
     df.to_csv(CSV_PATH, index=False)
 
+    ratio = accepted / max(len(merged), 1)
+
     print("\n📊 AUTO LABEL STATS")
     print("  candidatas:", len(pending))
     print("  con embedding:", len(merged))
     print("  ✅ aceptadas:", accepted)
     print("  ⚠️ baja confianza:", rejected)
+    print(f"  📈 aceptación real: {round(ratio,3)}")
 
 # =====================================
 # BOOTSTRAP
